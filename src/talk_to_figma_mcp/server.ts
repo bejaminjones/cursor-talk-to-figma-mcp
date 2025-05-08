@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import WebSocket from "ws";
 import { v4 as uuidv4 } from "uuid";
+import { registerBatchOperations, BatchCreateElementsParams, BundledCommandsParams } from "./batch_operations.js";
 
 // Define TypeScript interfaces for Figma responses
 interface FigmaResponse {
@@ -2582,7 +2583,9 @@ type FigmaCommand =
   | "set_item_spacing"
   | "get_reactions"
   | "set_default_connector"
-  | "create_connections";
+  | "create_connections"
+  | "batch_create_elements"
+  | "execute_bundled_commands";
 
 type CommandParams = {
   get_document_info: Record<string, never>;
@@ -2725,7 +2728,8 @@ type CommandParams = {
       text?: string;
     }>;
   };
-  
+  batch_create_elements: BatchCreateElementsParams;
+  execute_bundled_commands: BundledCommandsParams;
 };
 
 
@@ -3019,6 +3023,9 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   logger.info('FigmaMCP server running on stdio');
+
+  // Register batch operations
+  registerBatchOperations(server, sendCommandToFigma);
 }
 
 // Run the server

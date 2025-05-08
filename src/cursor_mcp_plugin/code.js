@@ -229,6 +229,10 @@ async function handleCommand(command, params) {
       return await setDefaultConnector(params);
     case "create_connections":
       return await createConnections(params);
+    case "batch_create_elements":
+      return await batchCreateElements(params);
+    case "execute_bundled_commands":
+      return await executeBundledCommands(params);
     default:
       throw new Error(`Unknown command: ${command}`);
   }
@@ -3911,5 +3915,322 @@ async function createConnections(params) {
     success: true,
     count: results.length,
     connections: results
+  };
+}
+
+// Batch create elements function
+async function batchCreateElements(params) {
+  const { elements } = params || {};
+  const commandId = params.commandId || generateCommandId();
+
+  if (!elements || !Array.isArray(elements) || elements.length === 0) {
+    const errorMsg = "Missing required parameter: elements array";
+    
+    // Send error progress update
+    sendProgressUpdate(
+      commandId,
+      "batch_create_elements",
+      "error",
+      0,
+      0,
+      0,
+      errorMsg,
+      { error: errorMsg }
+    );
+
+    throw new Error(errorMsg);
+  }
+
+  console.log(`Starting batch creation of ${elements.length} elements`);
+
+  // Send started progress update
+  sendProgressUpdate(
+    commandId,
+    "batch_create_elements",
+    "started",
+    0,
+    elements.length,
+    0,
+    `Starting batch creation of ${elements.length} elements`,
+    { totalElements: elements.length }
+  );
+
+  // Define the results array and counters
+  const results = [];
+  let createdCount = 0;
+  let failedCount = 0;
+
+  // Process each element
+  for (let i = 0; i < elements.length; i++) {
+    const element = elements[i];
+    const progress = Math.round((i / elements.length) * 100);
+    
+    // Send progress update
+    sendProgressUpdate(
+      commandId,
+      "batch_create_elements",
+      "in_progress",
+      progress,
+      elements.length,
+      i,
+      `Creating element ${i + 1}/${elements.length}`,
+      { currentElement: i + 1 }
+    );
+
+    try {
+      let result;
+      switch (element.type) {
+        case "rectangle":
+          result = await createRectangle({
+            x: element.x,
+            y: element.y,
+            width: element.width || 100,
+            height: element.height || 100,
+            name: element.name,
+            parentId: element.parentId
+          });
+          
+          // Apply styles if provided
+          if (element.styles) {
+            const nodeId = result.nodeId;
+            if (element.styles.fillColor) {
+              await setFillColor({
+                nodeId,
+                r: element.styles.fillColor.r,
+                g: element.styles.fillColor.g,
+                b: element.styles.fillColor.b,
+                a: element.styles.fillColor.a
+              });
+            }
+            if (element.styles.strokeColor) {
+              await setStrokeColor({
+                nodeId,
+                r: element.styles.strokeColor.r,
+                g: element.styles.strokeColor.g,
+                b: element.styles.strokeColor.b,
+                a: element.styles.strokeColor.a,
+                weight: element.styles.strokeWeight
+              });
+            }
+            if (element.styles.cornerRadius !== undefined) {
+              await setCornerRadius({
+                nodeId,
+                radius: element.styles.cornerRadius
+              });
+            }
+          }
+          
+          results.push({
+            success: true,
+            nodeId: result.nodeId,
+            type: "rectangle"
+          });
+          createdCount++;
+          break;
+          
+        case "frame":
+          result = await createFrame({
+            x: element.x,
+            y: element.y,
+            width: element.width || 200,
+            height: element.height || 200,
+            name: element.name,
+            parentId: element.parentId,
+            fillColor: element.styles?.fillColor,
+            strokeColor: element.styles?.strokeColor,
+            strokeWeight: element.styles?.strokeWeight
+          });
+          
+          // Apply corner radius if provided
+          if (element.styles && element.styles.cornerRadius !== undefined) {
+            await setCornerRadius({
+              nodeId: result.nodeId,
+              radius: element.styles.cornerRadius
+            });
+          }
+          
+          results.push({
+            success: true,
+            nodeId: result.nodeId,
+            type: "frame"
+          });
+          createdCount++;
+          break;
+          
+        case "text":
+          result = await createText({
+            x: element.x,
+            y: element.y,
+            text: element.text || "Text",
+            fontSize: element.styles?.fontSize,
+            fontWeight: element.styles?.fontWeight,
+            fontColor: element.styles?.fillColor, // Use fillColor for text color
+            name: element.name,
+            parentId: element.parentId
+          });
+          
+          results.push({
+            success: true,
+            nodeId: result.nodeId,
+            type: "text"
+          });
+          createdCount++;
+          break;
+          
+        default:
+          const errorMsg = `Unsupported element type: ${element.type}`;
+          results.push({
+            success: false,
+            type: element.type,
+            error: errorMsg
+          });
+          failedCount++;
+      }
+    } catch (error) {
+      console.error(`Error creating element: ${error.message}`);
+      results.push({
+        success: false,
+        type: element.type,
+        error: error.message
+      });
+      failedCount++;
+    }
+  }
+
+  // Send completed progress update
+  sendProgressUpdate(
+    commandId,
+    "batch_create_elements",
+    "completed",
+    100,
+    elements.length,
+    elements.length,
+    `Batch creation completed: ${createdCount} elements created, ${failedCount} failed`,
+    { createdCount, failedCount }
+  );
+
+  // Return the final result
+  return {
+    success: createdCount > 0,
+    message: `Created ${createdCount} elements, ${failedCount} failed`,
+    createdCount,
+    failedCount,
+    results
+  };
+}
+
+// Execute bundled commands function
+async function executeBundledCommands(params) {
+  const { commands, stopOnError = false } = params || {};
+  const commandId = params.commandId || generateCommandId();
+
+  if (!commands || !Array.isArray(commands) || commands.length === 0) {
+    const errorMsg = "Missing required parameter: commands array";
+    
+    // Send error progress update
+    sendProgressUpdate(
+      commandId,
+      "execute_bundled_commands",
+      "error",
+      0,
+      0,
+      0,
+      errorMsg,
+      { error: errorMsg }
+    );
+
+    throw new Error(errorMsg);
+  }
+
+  console.log(`Starting execution of ${commands.length} bundled commands`);
+
+  // Send started progress update
+  sendProgressUpdate(
+    commandId,
+    "execute_bundled_commands",
+    "started",
+    0,
+    commands.length,
+    0,
+    `Starting execution of ${commands.length} bundled commands`,
+    { totalCommands: commands.length }
+  );
+
+  // Sort commands by priority if provided
+  const sortedCommands = [...commands].sort((a, b) => {
+    const priorityValues = { high: 0, normal: 1, low: 2 };
+    const aPriority = a.priority ? priorityValues[a.priority] : 1; // default to normal
+    const bPriority = b.priority ? priorityValues[b.priority] : 1;
+    return aPriority - bPriority;
+  });
+
+  // Define the results array and counters
+  const results = [];
+  let completedCount = 0;
+  let failedCount = 0;
+
+  // Process each command
+  for (let i = 0; i < sortedCommands.length; i++) {
+    const cmd = sortedCommands[i];
+    const progress = Math.round((i / sortedCommands.length) * 100);
+    
+    // Send progress update
+    sendProgressUpdate(
+      commandId,
+      "execute_bundled_commands",
+      "in_progress",
+      progress,
+      sortedCommands.length,
+      i,
+      `Executing command ${i + 1}/${sortedCommands.length}: ${cmd.command}`,
+      { currentCommand: i + 1, commandType: cmd.command }
+    );
+
+    try {
+      // Execute the command using the existing handleCommand function
+      const result = await handleCommand(cmd.command, cmd.params);
+      
+      results.push({
+        command: cmd.command,
+        success: true,
+        result
+      });
+      completedCount++;
+    } catch (error) {
+      console.error(`Error executing command ${cmd.command}: ${error.message}`);
+      results.push({
+        command: cmd.command,
+        success: false,
+        error: error.message
+      });
+      failedCount++;
+      
+      // Stop execution if stopOnError is true and there was an error
+      if (stopOnError) {
+        console.log(`Stopping execution due to error in command ${cmd.command} and stopOnError=true`);
+        break;
+      }
+    }
+  }
+
+  // Send completed progress update
+  sendProgressUpdate(
+    commandId,
+    "execute_bundled_commands",
+    "completed",
+    100,
+    sortedCommands.length,
+    completedCount + failedCount,
+    `Bundled commands execution completed: ${completedCount} completed, ${failedCount} failed`,
+    { completedCount, failedCount }
+  );
+
+  // Return the final result
+  return {
+    success: completedCount > 0,
+    message: `Executed ${completedCount} commands, ${failedCount} failed`,
+    completedCount,
+    failedCount,
+    results
   };
 }
